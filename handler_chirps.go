@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"time"
 	"github.com/austinwilson1296/Chirpy/internal/database"
+	"github.com/austinwilson1296/Chirpy/internal/auth"
 	
 )
 type Chirp struct{
@@ -38,15 +39,26 @@ func (cfg *apiConfig) handlerChirpCreate(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Chirp is too long", nil)
 		return
 	}
+
+	token,err := auth.GetBearerToken(r.Header)
+	if err != nil{
+		respondWithError(w, http.StatusUnauthorized, "Error getting session token",err)
+		return
+	}
+	authID,err := auth.ValidateJWT(token,cfg.tokenSecret)
+	if err != nil{
+		respondWithError(w, http.StatusUnauthorized, "Error verifying user",err)
+		return
+	}
+
 	chirp,err := cfg.db.CreateChirp(r.Context(), database.CreateChirpParams{
 		Body: params.Body,
-		UserID: params.UserID,
+		UserID: authID,
 	})
 	if err != nil{
 		respondWithError(w, http.StatusBadRequest, "Error creating chirp",err)
 		return
 	}
-
 
 	respondWithJSON(w, http.StatusCreated, returnVals{
 		Chirp: Chirp{
@@ -54,7 +66,7 @@ func (cfg *apiConfig) handlerChirpCreate(w http.ResponseWriter, r *http.Request)
 			CreatedAt: chirp.CreatedAt,
 			UpdatedAt: chirp.UpdatedAt,
 			Body: chirp.Body,
-			UserID: params.UserID,
+			UserID: authID,
 		},
 	})
 }

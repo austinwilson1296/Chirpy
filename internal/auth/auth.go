@@ -6,6 +6,8 @@ import(
 	"github.com/golang-jwt/jwt/v5"
 	"time"
 	"github.com/google/uuid"
+	"strings"
+	"net/http"
 	
 
 
@@ -63,4 +65,17 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	
     // and convert it to UUID?
 	return userID,nil
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+    authKey := headers.Get("Authorization")
+    if authKey == "" {
+        return "", fmt.Errorf("cannot parse empty key")
+    }
+    const prefix = "Bearer "
+    if !strings.HasPrefix(authKey, prefix) {
+        return "", fmt.Errorf("authorization header must start with Bearer")
+    }
+    formattedString := strings.TrimSpace(strings.TrimPrefix(authKey, prefix))
+    return formattedString, nil
 }
