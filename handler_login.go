@@ -4,68 +4,78 @@ import (
 	"encoding/json"
 	"net/http"
 	"github.com/austinwilson1296/Chirpy/internal/auth"
+	"github.com/austinwilson1296/Chirpy/internal/database"
 	"time"
+	
 )
 
 
 func (cfg *apiConfig) handlerLogin(w http.ResponseWriter, r *http.Request) {
-    type parameters struct {
-        Password string `json:"password"`
-        Email    string `json:"email"`
-		Expires time.Duration `json:"expires_in_seconds"`
-    }
-    type response struct {
-        User
-		Token string `json:"token"`
-    }
-
-    // First decode the parameters
-    decoder := json.NewDecoder(r.Body)
-    params := parameters{}
-    err := decoder.Decode(&params)
-    if err != nil {
-        respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
-        return
-    }
-
-	params.Expires = time.Duration(params.Expires) * time.Second
-
-	if params.Expires == 0{
-		params.Expires = 1 * time.Hour
-	}else if params.Expires > time.Hour * 1 {
-		params.Expires = time.Hour * 1
+	type parameters struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
 	}
-	
-    // Then get the user
-    user, err := cfg.db.GetUser(r.Context(), params.Email)
-    if err != nil {
-        respondWithError(w, http.StatusUnauthorized, "Incorrect email or password", nil)
-        return
-    }
+	type response struct {
+		User
+		Token        string `json:"token"`
+		RefreshToken string `json:"refresh_token"`
+	}
 
-    // Now what would you add here to:
-    // 1. Check the password hash
-	err = auth.CheckPasswordHash(user.HashedPassword, params.Password)
+	decoder := json.NewDecoder(r.Body)
+	params := parameters{}
+	err := decoder.Decode(&params)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password", nil)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't decode parameters", err)
 		return
 	}
 
-	key,err := auth.MakeJWT(user.ID,cfg.tokenSecret,params.Expires)
-	if err != nil{
-		respondWithError(w, http.StatusUnauthorized, "error generating token", nil)
-		return 
+	user, err := cfg.db.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password", err)
+		return
 	}
-	
+
+	err = auth.CheckPasswordHash(params.Password, user.HashedPassword)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "Incorrect email or password", err)
+		return
+	}
+
+	accessToken, err := auth.MakeJWT(
+		user.ID,
+		cfg.jwtSecret,
+		time.Hour,
+	)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create access JWT", err)
+		return
+	}
+
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create refresh token", err)
+		return
+	}
+
+	_, err = cfg.db.CreateRefreshToken(r.Context(), database.CreateRefreshTokenParams{
+		UserID:    user.ID,
+		Token:     refreshToken,
+		ExpiresAt: time.Now().UTC().Add(time.Hour * 24 * 60),
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save refresh token", err)
+		return
+	}
+
 	respondWithJSON(w, http.StatusOK, response{
 		User: User{
 			ID:        user.ID,
 			CreatedAt: user.CreatedAt,
 			UpdatedAt: user.UpdatedAt,
 			Email:     user.Email,
-			
+			IsChirpyRed: user.IsChirpyRed.Bool,
 		},
-		Token: key,
-		
+		Token:        accessToken,
+		RefreshToken: refreshToken,
 	})
 }
